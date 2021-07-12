@@ -1,34 +1,48 @@
+function getTableKeys(tab)
+  local keyset = {}
+  for k,v in pairs(tab) do
+    keyset[#keyset + 1] = k
+  end
+  return keyset
+end
+
 FsmMachine = {}
 
-function FsmMachine:New()
+function FsmMachine:New(opts)
+    opts = opts or {}
+
     self.__index = self
-    o = setmetatable({}, self)
+    local o = setmetatable({}, self)
     o.states = {}
     o.curState = nil
+    o.debug = opts["debug"]
     return o
+end
+
+ -- Current state
+function FsmMachine:GetCurrent()
+  return self.curState.stateName
+end
+
+
+ -- Available actions
+function FsmMachine:GetActions()
+  return getTableKeys(self.curState.transitions)
 end
 
  -- Add state
 function FsmMachine:AddState(stateName, callbacks)
   local state = BaseState:New(stateName)
 
-  function state:OnEnter()
-      if callbacks["onEnter"] then
-        callbacks["onEnter"]()
-      end
+  self.states[stateName] = state
+
+  if callbacks then
+    self:Listen(stateName, callbacks)
   end
 
-  function state:OnLeave()
-    if callbacks["onLeave"] then
-      callbacks["onLeave"]()
-    end
+  if not self.curState then
+    self:AddInitState(stateName)
   end
-
-    self.states[stateName] = state
-
-    if not self.curState then
-      self:AddInitState(stateName)
-    end
 end
 
  -- default initialization
@@ -55,6 +69,19 @@ function FsmMachine:Connect(opts)
   end
 end
 
+function FsmMachine:Listen(toStateName, callbacks)
+  local state = self.states[toStateName]
+  local onEnter = callbacks["onEnter"]
+  if onEnter then
+    state:ListenToOnEnter(onEnter)
+  end
+
+  local onLeave = callbacks["onLeave"]
+  if onLeave then
+    state:ListenToOnLeave(onLeave)
+  end
+end
+
  -- switching state
 function FsmMachine:Switch(message)
   local shouldTransition = false
@@ -64,12 +91,12 @@ function FsmMachine:Switch(message)
     destState = self.curState.transitions[message]
   end
   if shouldTransition then
-    print("FsmMachine: [" .. message .. "] message received")
+    if self.debug then print("FsmMachine: [" .. message .. "] message received") end
     self.curState:OnLeave()
     self.curState = destState
     self.curState:OnEnter()
   else
-    print("FsmMachine: Unknown message [" .. message .. "] for state [" .. self.curState.stateName .. "]")
+    if self.debug then print("FsmMachine: Unknown message [" .. message .. "] for state [" .. self.curState.stateName .. "]") end
   end
 end
 
@@ -79,6 +106,8 @@ function BaseState:New(stateName)
     self.__index = self
     local o = setmetatable({}, self)
     o.stateName = stateName
+    o.onLeaves = {}
+    o.onEnters = {}
     o.transitions = {}
     return o
 end
@@ -88,12 +117,28 @@ function BaseState:Connect(message, destState)
   self.transitions[message] = destState
 end
 
+ -- Listen to onEnter
+function BaseState:ListenToOnEnter(onEnter)
+  table.insert(self.onEnters, onEnter)
+end
+
+ -- Listen to onLeave
+function BaseState:ListenToOnLeave(onLeave)
+  table.insert(self.onLeaves, onLeave)
+end
+
  -- Enter state 
 function BaseState:OnEnter()
+  for i, onEnter in ipairs(self.onEnters) do
+    onEnter()
+  end
 end
 
  -- leave the state
 function BaseState:OnLeave()
+  for i, onLeave in ipairs(self.onLeaves) do
+    onLeave()
+  end
 end
 
 return FsmMachine
